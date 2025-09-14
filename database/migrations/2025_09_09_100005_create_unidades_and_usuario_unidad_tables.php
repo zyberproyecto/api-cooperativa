@@ -5,33 +5,58 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-    public function up(): void {
+    public function up(): void
+    {
+        // Unidades
+        Schema::create('unidades', function (Blueprint $t) {
+            $t->engine    = 'InnoDB';
+            $t->charset   = 'utf8mb4';
+            $t->collation = 'utf8mb4_unicode_ci';
 
-        Schema::create('unidades', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->string('codigo', 50)->unique();   // ej. “A-12” o similar
-            $table->string('etapa', 50)->nullable();  // etapa de obra
-            $table->unsignedTinyInteger('dormitorios')->nullable(); // 1..3
-            $table->enum('estado', ['asignada', 'disponible', 'en_obra'])->default('disponible');
-            $table->timestamps();
+            $t->bigIncrements('id');
+            $t->string('codigo', 50)->unique();
+            $t->string('descripcion', 191)->nullable();
+            $t->tinyInteger('dormitorios')->nullable();
+            $t->decimal('m2', 6, 2)->nullable();
+            $t->enum('estado_unidad', ['disponible','asignada','entregada'])->default('disponible');
+            $t->timestamps();
         });
 
-        // Relación N:1 (cada usuario con 0..1 unidad); si querés permitir múltiple, mantené N:M
-        Schema::create('usuario_unidad', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->string('ci_usuario', 20)->index();
-            $table->foreign('ci_usuario')->references('ci_usuario')->on('usuarios')->cascadeOnUpdate()->restrictOnDelete();
+        // Relación usuario-unidad
+        Schema::create('usuario_unidad', function (Blueprint $t) {
+            $t->engine    = 'InnoDB';
+            $t->charset   = 'utf8mb4';
+            $t->collation = 'utf8mb4_unicode_ci';
 
-            $table->unsignedBigInteger('unidad_id')->index();
-            $table->foreign('unidad_id')->references('id')->on('unidades')->cascadeOnUpdate()->restrictOnDelete();
+            $t->bigIncrements('id');
 
-            $table->timestamp('asignado_en')->nullable();
+            // MATCHEA EXACTO con usuarios.ci_usuario (VARCHAR(8))
+            $t->string('ci_usuario', 8)->collation('utf8mb4_unicode_ci');
 
-            $table->timestamps();
+            // FK local a unidades
+            $t->unsignedBigInteger('unidad_id');
+
+            $t->date('fecha_asignacion');
+            $t->enum('estado', ['activa','liberada'])->default('activa');
+            $t->text('nota_admin')->nullable();
+            $t->timestamps();
+
+            // FKs
+            $t->foreign('ci_usuario')
+              ->references('ci_usuario')->on('usuarios')
+              ->onDelete('cascade');
+
+            $t->foreign('unidad_id')
+              ->references('id')->on('unidades')
+              ->onDelete('restrict');
+
+            $t->index(['ci_usuario','estado']);
+            $t->unique(['ci_usuario','unidad_id'], 'uniq_ci_unidad');
         });
     }
 
-    public function down(): void {
+    public function down(): void
+    {
         Schema::dropIfExists('usuario_unidad');
         Schema::dropIfExists('unidades');
     }

@@ -12,20 +12,18 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Globales (CORS activo para que respete config/cors.php)
+        // Global: respeta config/cors.php
         $middleware->use([
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
 
-        // Aliases de middleware
+        // Alias útiles para APIs (opcionales pero recomendados)
         $middleware->alias([
-            // Tu alias existente
-            'is_admin' => \App\Http\Middleware\IsAdmin::class,
-
-            // Necesarios para auth y abilities con Sanctum
-            'auth'      => \Illuminate\Auth\Middleware\Authenticate::class,
-            'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,       // requiere TODAS
-            'ability'   => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,  // requiere ALGUNA
+            'auth'      => \Illuminate\Auth\Middleware\Authenticate::class, // usado por auth:sanctum
+            'throttle'  => \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            // si vas a usar abilities de Sanctum más adelante:
+            'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
+            'ability'   => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

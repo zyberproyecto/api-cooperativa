@@ -2,177 +2,141 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\HoraTrabajo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
+use Carbon\Carbon;
 
 class HorasController extends Controller
 {
-    /**
-     * Socio: registrar horas
-     * POST /api/horas
-     */
+    /** POST /api/horas  (auth:sanctum) */
     public function store(Request $r)
     {
-        $u  = $r->user();
-        $ci = $u->ci_usuario ?? $u->ci ?? null;
-        if (!$ci) {
+        $user = $r->user();
+        if (!$user) {
+            return response()->json(['ok' => false, 'message' => 'No autenticado'], 401);
+        }
+
+        // CI normalizado a dígitos
+        $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? $user->ci ?? ''));
+        if ($ci === '') {
             return response()->json(['ok' => false, 'message' => 'Usuario inválido.'], 401);
         }
 
+        // 🚫 Solo aceptamos columnas reales y horas <= 21
         $data = $r->validate([
-            // ISO-8601 (YYYY-Www). Aceptamos otros strings pero recomendamos este formato.
-            'semana' => ['required','string','max:20'],
-            'horas'  => ['required','integer','min:0','max:100'],
-            'motivo' => ['nullable','string','max:1000'], // requerido si horas < 21
+            'semana_inicio'    => ['required','date_format:Y-m-d'],
+            'horas_reportadas' => ['required','numeric','min:0','max:21'],   // ← tope duro
+            'motivo'           => ['nullable','string','max:1000'],
         ]);
 
-        $horas  = (int) $data['horas'];
-        $motivo = trim((string) ($data['motivo'] ?? ''));
-
-        if ($horas < 21 && $motivo === '') {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Si las horas son menores a 21, debe indicar un motivo.',
-            ], 422);
+        // Si reporta menos de 21, motivo es obligatorio
+        if ($data['horas_reportadas'] < 21 && empty($data['motivo'])) {
+            throw ValidationException::withMessages([
+                'motivo' => 'Si las horas son menores a 21, debe indicar un motivo.',
+            ]);
         }
 
-        // --- Resolver columnas dinámicas ---
-        if (!Schema::hasTable('horas_trabajo')) {
-            return response()->json(['ok' => false, 'message' => 'Falta la tabla horas_trabajo.'], 500);
-        }
-        $colsHoras   = Schema::getColumnListing('horas_trabajo');
-        $colCiHoras  = in_array('ci_usuario', $colsHoras, true) ? 'ci_usuario'
-                      : (in_array('ci', $colsHoras, true) ? 'ci' : null);
-        $hasDescCol  = in_array('descripcion', $colsHoras, true);
+        $semanaInicio = $data['semana_inicio'];
+        $semanaFin    = Carbon::parse($semanaInicio)->addDays(6)->toDateString();
 
-        if (!$colCiHoras) {
-            return response()->json(['ok' => false, 'message' => 'Tabla horas_trabajo sin columna CI (ci_usuario/ci).'], 500);
-        }
-
-        // Upsert por (ci, semana) para evitar duplicados del mismo período
-        $now            = now();
-        $payloadUpdate  = [
-            'horas'      => $horas,
-            'estado'     => 'pendiente', // si reenvía, vuelve a pendiente
-            'updated_at' => $now,
-        ];
-        if ($hasDescCol && $horas < 21) {
-            $payloadUpdate['descripcion'] = $motivo; // guardamos motivo
-        }
-
-        $existsId = DB::table('horas_trabajo')
-            ->where($colCiHoras, $ci)
-            ->where('semana', $data['semana'])
+        // Upsert por (ci_usuario, semana_inicio)
+        $existeId = HoraTrabajo::where('ci_usuario', $ci)
+            ->whereDate('semana_inicio', $semanaInicio)
             ->value('id');
 
-        if ($existsId) {
-            DB::table('horas_trabajo')->where('id', $existsId)->update($payloadUpdate);
-            $id = $existsId;
+        if ($existeId) {
+            HoraTrabajo::where('id', $existeId)->update([
+                'horas_reportadas' => $data['horas_reportadas'],   // nunca > 21
+                'motivo'           => $data['motivo'] ?: null,
+                'estado'           => HoraTrabajo::ESTADO_REPORTADO,
+                'semana_fin'       => $semanaFin,
+                'updated_at'       => now(),
+            ]);
+            $id     = $existeId;
+            $status = 200;
         } else {
-            $payloadInsert = [
-                $colCiHoras => $ci,
-                'semana'    => $data['semana'],
-                'horas'     => $horas,
-                'estado'    => 'pendiente',
-                'created_at'=> $now,
-                'updated_at'=> $now,
-            ];
-            if ($hasDescCol && $horas < 21) {
-                $payloadInsert['descripcion'] = $motivo;
-            }
-            $id = DB::table('horas_trabajo')->insertGetId($payloadInsert);
+            $nuevo = HoraTrabajo::create([
+                'ci_usuario'       => $ci,
+                'semana_inicio'    => $semanaInicio,
+                'semana_fin'       => $semanaFin,
+                'horas_reportadas' => $data['horas_reportadas'],   // nunca > 21
+                'motivo'           => $data['motivo'] ?? null,
+                'estado'           => HoraTrabajo::ESTADO_REPORTADO,
+            ]);
+            $id     = $nuevo->id;
+            $status = 201;
         }
 
-        // --- Manejo de exoneraciones ligado al mismo periodo ---
+        // Exoneración automática (si existe la tabla)
         $exoneracion = null;
         if (Schema::hasTable('exoneraciones')) {
-            $colsExo  = Schema::getColumnListing('exoneraciones');
-            $colCiExo = in_array('ci_usuario', $colsExo, true) ? 'ci_usuario'
-                      : (in_array('ci', $colsExo, true) ? 'ci' : null);
+            if ($data['horas_reportadas'] < 21) {
+                // crear/actualizar a 'pendiente'
+                $exoId = DB::table('exoneraciones')
+                    ->where('ci_usuario', $ci)
+                    ->whereDate('semana_inicio', $semanaInicio)
+                    ->value('id');
 
-            if ($colCiExo) {
-                if ($horas < 21) {
-                    // upsert exoneración a pendiente
-                    $exoId = DB::table('exoneraciones')
-                        ->where($colCiExo, $ci)
-                        ->where('periodo', $data['semana'])
-                        ->value('id');
-
-                    if ($exoId) {
-                        DB::table('exoneraciones')->where('id', $exoId)->update([
-                            'motivo'     => $motivo,
-                            'estado'     => 'pendiente',
-                            'updated_at' => $now,
-                        ]);
-                        $exoneracion = ['id' => $exoId, 'estado' => 'pendiente', 'action' => 'updated'];
-                    } else {
-                        $exoId = DB::table('exoneraciones')->insertGetId([
-                            $colCiExo   => $ci,
-                            'periodo'   => $data['semana'],
-                            'motivo'    => $motivo,
-                            'estado'    => 'pendiente',
-                            'created_at'=> $now,
-                            'updated_at'=> $now,
-                        ]);
-                        $exoneracion = ['id' => $exoId, 'estado' => 'pendiente', 'action' => 'created'];
-                    }
+                if ($exoId) {
+                    DB::table('exoneraciones')->where('id', $exoId)->update([
+                        'motivo'     => $data['motivo'],
+                        'estado'     => 'pendiente',
+                        'updated_at' => now(),
+                    ]);
+                    $exoneracion = ['id' => $exoId, 'estado' => 'pendiente', 'action' => 'updated'];
                 } else {
-                    // si ahora cumple 21+, cancelar exoneración pendiente del período
-                    $aff = DB::table('exoneraciones')
-                        ->where($colCiExo, $ci)
-                        ->where('periodo', $data['semana'])
-                        ->where('estado', 'pendiente')
-                        ->update(['estado' => 'rechazado', 'updated_at' => $now]);
-
-                    if ($aff) {
-                        $exoneracion = ['estado' => 'rechazado', 'action' => 'auto_cancelled'];
-                    }
+                    $exoId = DB::table('exoneraciones')->insertGetId([
+                        'ci_usuario'    => $ci,
+                        'semana_inicio' => $semanaInicio,
+                        'motivo'        => $data['motivo'],
+                        'estado'        => 'pendiente',
+                        'created_at'    => now(),
+                        'updated_at'    => now(),
+                    ]);
+                    $exoneracion = ['id' => $exoId, 'estado' => 'pendiente', 'action' => 'created'];
+                }
+            } else {
+                // si ahora son 21 exactas, cancelar exoneración pendiente de esa semana
+                $aff = DB::table('exoneraciones')
+                    ->where('ci_usuario', $ci)
+                    ->whereDate('semana_inicio', $semanaInicio)
+                    ->where('estado', 'pendiente')
+                    ->update(['estado' => 'rechazado', 'updated_at' => now()]);
+                if ($aff) {
+                    $exoneracion = ['estado' => 'rechazado', 'action' => 'auto_cancelled'];
                 }
             }
         }
 
-        return response()->json([
-            'ok'          => true,
-            'id'          => $id,
-            'exoneracion' => $exoneracion, // null si no aplica
-        ], $existsId ? 200 : 201);
+        return response()->json(['ok' => true, 'id' => $id, 'exoneracion' => $exoneracion], $status);
     }
 
-    /**
-     * Socio: ver MIS horas
-     * GET /api/horas   (bloque autenticado)
-     */
+    /** GET /api/horas/mias */
     public function index(Request $r)
     {
-        $u  = $r->user();
-        $ci = $u->ci_usuario ?? $u->ci ?? null;
-        if (!$ci) {
+        $user = $r->user();
+        if (!$user) {
+            return response()->json(['ok' => false, 'message' => 'No autenticado'], 401);
+        }
+
+        $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? $user->ci ?? ''));
+        if ($ci === '') {
             return response()->json(['ok' => false, 'message' => 'Usuario inválido.'], 401);
         }
 
-        $colsHoras  = Schema::getColumnListing('horas_trabajo');
-        $colCiHoras = in_array('ci_usuario', $colsHoras, true)
-            ? 'ci_usuario'
-            : (in_array('ci', $colsHoras, true) ? 'ci' : null);
-
-        if (!$colCiHoras) {
-            return response()->json(['ok' => false, 'message' => 'Tabla horas_trabajo sin columna CI (ci_usuario/ci).'], 500);
-        }
-
-        $items = DB::table('horas_trabajo')
-            ->where($colCiHoras, $ci)
-            ->orderByDesc('created_at')
+        $items = HoraTrabajo::where('ci_usuario', $ci)
+            ->orderByDesc('semana_inicio')
+            ->orderByDesc('id')
             ->limit(100)
             ->get();
 
         return response()->json(['ok' => true, 'items' => $items]);
     }
 
-    /**
-     * Admin: listar horas por estado (default: pendientes)
-     * GET /api/admin/horas?estado=pendiente|aprobado|rechazado|todos&ci=XXXX
-     */
+    /** GET /api/admin/horas?estado=pendiente|aprobado|rechazado|todos&ci=XXXXXXXX */
     public function adminIndex(Request $r)
     {
         $estado = strtolower($r->query('estado', 'pendiente'));
@@ -183,29 +147,21 @@ class HorasController extends Controller
         }
 
         if ($ci = $r->query('ci')) {
-            $ci = trim((string)$ci);
-            $colsHoras  = Schema::getColumnListing('horas_trabajo');
-            $colCiHoras = in_array('ci_usuario', $colsHoras, true)
-                ? 'ci_usuario'
-                : (in_array('ci', $colsHoras, true) ? 'ci' : null);
-            if ($colCiHoras) {
-                $q->where($colCiHoras, $ci);
+            $ci = preg_replace('/\D/', '', (string)$ci);
+            if ($ci !== '') {
+                $q->where('ci_usuario', $ci);
             }
         }
 
         $rows = $q->orderByDesc('id')->get();
-
         return response()->json(['ok' => true, 'items' => $rows]);
     }
 
-    /**
-     * Admin: aprobar
-     * PUT /api/admin/horas/{id}/validar
-     */
+    /** PUT /api/admin/horas/{id}/validar */
     public function validar(int $id)
     {
-        $aff = DB::table('horas_trabajo')->where('id', $id)->update([
-            'estado'     => 'aprobado',
+        $aff = HoraTrabajo::where('id', $id)->update([
+            'estado'     => HoraTrabajo::ESTADO_APROBADO,
             'updated_at' => now(),
         ]);
 
@@ -214,48 +170,25 @@ class HorasController extends Controller
             : response()->json(['ok' => false, 'message' => 'Registro no encontrado'], 404);
     }
 
-    /**
-     * Admin: rechazar
-     * PUT /api/admin/horas/{id}/rechazar
-     */
-    public function rechazar(int $id, Request $r)
+    /** PUT /api/admin/horas/{id}/rechazar */
+    public function rechazar(int $id)
     {
-        $motivo = (string)($r->input('motivo') ?? '');
-
-        $hora = DB::table('horas_trabajo')->where('id', $id)->first();
+        $hora = HoraTrabajo::find($id);
         if (!$hora) {
             return response()->json(['ok' => false, 'message' => 'Registro no encontrado'], 404);
         }
 
-        DB::table('horas_trabajo')->where('id', $id)->update([
-            'estado'     => 'rechazado',
+        $hora->update([
+            'estado'     => HoraTrabajo::ESTADO_RECHAZADO,
             'updated_at' => now(),
         ]);
 
-        // Rechazar exoneración del mismo CI + periodo (si existe)
-        $colsExo  = Schema::getColumnListing('exoneraciones');
-        $colCiExo = in_array('ci_usuario', $colsExo, true)
-            ? 'ci_usuario'
-            : (in_array('ci', $colsExo, true) ? 'ci' : null);
-
-        if ($colCiExo && isset($hora->semana)) {
-            // Resolver columna CI en horas_trabajo para extraer valor correctamente
-            $colsHoras  = Schema::getColumnListing('horas_trabajo');
-            $colCiHoras = in_array('ci_usuario', $colsHoras, true)
-                ? 'ci_usuario'
-                : (in_array('ci', $colsHoras, true) ? 'ci' : null);
-
-            $ciHora = $colCiHoras && isset($hora->{$colCiHoras}) ? $hora->{$colCiHoras} : null;
-
-            if ($ciHora) {
-                DB::table('exoneraciones')
-                    ->where('periodo', $hora->semana)
-                    ->where($colCiExo, $ciHora)
-                    ->update([
-                        'estado'     => 'rechazado',
-                        'updated_at' => now(),
-                    ]);
-            }
+        if (Schema::hasTable('exoneraciones')) {
+            DB::table('exoneraciones')
+                ->where('ci_usuario', $hora->ci_usuario)
+                ->whereDate('semana_inicio', $hora->semana_inicio)
+                ->where('estado', 'pendiente')
+                ->update(['estado' => 'rechazado', 'updated_at' => now()]);
         }
 
         return response()->json(['ok' => true]);

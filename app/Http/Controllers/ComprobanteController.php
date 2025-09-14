@@ -9,54 +9,67 @@ use Illuminate\Support\Facades\Storage;
 
 class ComprobanteController extends Controller
 {
+    /** POST /api/comprobantes  (auth:sanctum, multipart/form-data) */
     public function store(Request $request)
     {
         $user = $request->user();
-        $ci   = $user->ci_usuario ?? $user->ci ?? null;
-        if (!$ci) {
+        if (!$user) {
+            return response()->json(['ok' => false, 'msg' => 'No autenticado.'], 401);
+        }
+
+        // CI solo dígitos
+        $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
+        if ($ci === '') {
             return response()->json(['ok' => false, 'msg' => 'No se pudo determinar el CI del usuario.'], 400);
         }
 
+        // ✅ Reglas:
+        // - tipo ∈ {mensual, aporte_inicial, compensatorio}
+        // - periodo: requerido si tipo ∈ {mensual, compensatorio} (YYYY-MM)
+        // - monto:   requerido SIEMPRE (incluye aporte_inicial)
+        // - archivo: adjunto obligatorio
         $data = $request->validate([
-            'tipo'       => ['required', 'in:mensual,aporte_inicial,inicial'],
-            'monto'      => ['nullable', 'numeric'],
-            'fecha_pago' => ['nullable', 'date'],
-            'archivo'    => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:8192'],
+            'tipo'    => ['required', 'in:aporte_mensual,aporte_inicial,compensatorio'],
+            'periodo' => [
+                'nullable',
+                'regex:/^\d{4}-(0[1-9]|1[0-2])$/',
+                'required_if:tipo,aporte_mensual,compensatorio',
+            ],
+            'monto'   => ['required', 'numeric', 'min:0'], // <- ahora obligatorio también para aporte_inicial
+            'archivo' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:8192'],
         ]);
 
-        if (!$request->hasFile('archivo')) {
-            return response()->json(['ok' => false, 'msg' => 'No se adjuntó archivo.'], 422);
+        if (!Schema::hasTable('comprobantes')) {
+            return response()->json(['ok' => false, 'msg' => 'Tabla comprobantes inexistente.'], 500);
         }
 
-        $tipo = ($data['tipo'] === 'inicial') ? 'aporte_inicial' : $data['tipo'];
-
-        $cols  = Schema::getColumnListing('comprobantes');
-        $colCi = in_array('ci_usuario', $cols, true) ? 'ci_usuario' : (in_array('ci', $cols, true) ? 'ci' : null);
-        if (!$colCi) {
-            return response()->json(['ok' => false, 'msg' => 'La tabla comprobantes no tiene columna ci_usuario ni ci.'], 500);
-        }
-
-        // 👇 ahora guardamos explícitamente en el DISCO 'public'
-        $path = $request->file('archivo')->store("comprobantes/{$ci}", 'public');
-        $publicUrl = Storage::url($path); // /storage/comprobantes/{ci}/...
+        // Guardar archivo en /storage (disco public)
+        $path      = $request->file('archivo')->store("comprobantes/{$ci}", 'public');
+        $publicUrl = Storage::url($path);
 
         try {
-            $id = DB::table('comprobantes')->insertGetId([
-                $colCi       => $ci,
-                'tipo'       => $tipo,
+            $cols   = Schema::getColumnListing('comprobantes');
+
+            $insert = [
+                'ci_usuario' => $ci,
+                'tipo'       => $data['tipo'],
                 'archivo'    => $publicUrl,
-                'monto'      => $data['monto']      ?? null,
-                'fecha_pago' => $data['fecha_pago'] ?? null,
                 'estado'     => 'pendiente',
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]);
+            ];
+
+            if (in_array('periodo', $cols, true)) $insert['periodo'] = $data['periodo'] ?? null;
+            if (in_array('monto',   $cols, true)) $insert['monto']   = $data['monto'];
+
+            $id = DB::table('comprobantes')->insertGetId($insert);
+
         } catch (\Throwable $e) {
             try { Storage::disk('public')->delete($path); } catch (\Throwable $ignored) {}
             return response()->json([
-                'ok'    => false,
-                'msg'   => 'No se pudo guardar el comprobante.',
-                'error' => $e->getMessage(),
+                'ok'  => false,
+                'msg' => 'No se pudo guardar el comprobante.',
+                'err' => $e->getMessage(),
             ], 500);
         }
 
@@ -68,25 +81,28 @@ class ComprobanteController extends Controller
         ], 201);
     }
 
+    /** GET /api/comprobantes/estado  (auth:sanctum) */
     public function index(Request $request)
     {
         $user = $request->user();
-        $ci   = $user->ci_usuario ?? $user->ci ?? null;
-        if (!$ci) {
+        if (!$user) {
+            return response()->json(['ok' => false, 'msg' => 'No autenticado.'], 401);
+        }
+
+        $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
+        if ($ci === '') {
             return response()->json(['ok' => false, 'msg' => 'No se pudo determinar el CI del usuario.'], 400);
         }
 
-        $cols  = Schema::getColumnListing('comprobantes');
-        $colCi = in_array('ci_usuario', $cols, true) ? 'ci_usuario' : (in_array('ci', $cols, true) ? 'ci' : null);
-        if (!$colCi) {
-            return response()->json(['ok' => false, 'msg' => 'La tabla comprobantes no tiene columna ci_usuario ni ci.'], 500);
+        if (!Schema::hasTable('comprobantes')) {
+            return response()->json(['ok' => false, 'msg' => 'Tabla comprobantes inexistente.'], 500);
         }
 
         $items = DB::table('comprobantes')
-            ->where($colCi, $ci)
+            ->where('ci_usuario', $ci)
             ->orderByDesc('created_at')
             ->get();
 
-        return response()->json(['ok' => true, 'items' => $items]);
+        return response()->json(['ok' => true, 'items' => $items], 200);
     }
 }

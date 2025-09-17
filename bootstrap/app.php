@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
            
             'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
             'ability'   => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
+            'require.approved' => \App\Http\Middleware\RequireApprovedSocio::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

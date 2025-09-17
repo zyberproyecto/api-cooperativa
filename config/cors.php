@@ -6,15 +6,14 @@ return [
 
     'allowed_methods' => ['*'],
 
-    // Quien llama a esta API: landing, frontend socios, backoffice y api-usuarios
     'allowed_origins' => [
-        'http://127.0.0.1:5500',  // landing + frontend socios (Live Server)
+        'http://127.0.0.1:5500',  
         'http://localhost:5500',
 
-        'http://127.0.0.1:8001',  // api-usuarios (puede necesitar consultar datos)
+        'http://127.0.0.1:8001',  
         'http://localhost:8001',
 
-        'http://127.0.0.1:8003',  // backoffice
+        'http://127.0.0.1:8003',  
         'http://localhost:8003',
     ],
 
@@ -26,6 +25,5 @@ return [
 
     'max_age' => 3600,
 
-    // Usamos Bearer tokens, no cookies cross-site
     'supports_credentials' => false,
 ];

@@ -16,7 +16,7 @@ class HorasTrabajoSeeder extends Seeder
         $semana2 = Carbon::now()->startOfWeek();
 
         DB::table('horas_trabajo')->insertOrIgnore([
-            // Socio 22222222: semana1 aprobada 21hs
+ 
             [
                 'ci_usuario'       => '22222222',
                 'semana_inicio'    => $semana1->toDateString(),
@@ -27,7 +27,7 @@ class HorasTrabajoSeeder extends Seeder
                 'created_at'       => $now,
                 'updated_at'       => $now,
             ],
-            // semana2 reportado con 18hs
+         
             [
                 'ci_usuario'       => '22222222',
                 'semana_inicio'    => $semana2->toDateString(),

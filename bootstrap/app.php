@@ -12,16 +12,15 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Global: respeta config/cors.php
+
         $middleware->use([
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
 
-        // Alias útiles para APIs (opcionales pero recomendados)
         $middleware->alias([
-            'auth'      => \Illuminate\Auth\Middleware\Authenticate::class, // usado por auth:sanctum
+            'auth'      => \Illuminate\Auth\Middleware\Authenticate::class, 
             'throttle'  => \Illuminate\Routing\Middleware\ThrottleRequests::class,
-            // si vas a usar abilities de Sanctum más adelante:
+           
             'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
             'ability'   => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
         ]);

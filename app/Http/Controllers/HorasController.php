@@ -11,7 +11,6 @@ use Carbon\Carbon;
 
 class HorasController extends Controller
 {
-    /** POST /api/horas  (auth:sanctum) */
     public function store(Request $r)
     {
         $user = $r->user();
@@ -19,20 +18,18 @@ class HorasController extends Controller
             return response()->json(['ok' => false, 'message' => 'No autenticado'], 401);
         }
 
-        // CI normalizado a dígitos
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? $user->ci ?? ''));
         if ($ci === '') {
             return response()->json(['ok' => false, 'message' => 'Usuario inválido.'], 401);
         }
 
-        // 🚫 Solo aceptamos columnas reales y horas <= 21
+   
         $data = $r->validate([
             'semana_inicio'    => ['required','date_format:Y-m-d'],
-            'horas_reportadas' => ['required','numeric','min:0','max:21'],   // ← tope duro
+            'horas_reportadas' => ['required','numeric','min:0','max:21'],   
             'motivo'           => ['nullable','string','max:1000'],
         ]);
 
-        // Si reporta menos de 21, motivo es obligatorio
         if ($data['horas_reportadas'] < 21 && empty($data['motivo'])) {
             throw ValidationException::withMessages([
                 'motivo' => 'Si las horas son menores a 21, debe indicar un motivo.',
@@ -42,14 +39,13 @@ class HorasController extends Controller
         $semanaInicio = $data['semana_inicio'];
         $semanaFin    = Carbon::parse($semanaInicio)->addDays(6)->toDateString();
 
-        // Upsert por (ci_usuario, semana_inicio)
         $existeId = HoraTrabajo::where('ci_usuario', $ci)
             ->whereDate('semana_inicio', $semanaInicio)
             ->value('id');
 
         if ($existeId) {
             HoraTrabajo::where('id', $existeId)->update([
-                'horas_reportadas' => $data['horas_reportadas'],   // nunca > 21
+                'horas_reportadas' => $data['horas_reportadas'],  
                 'motivo'           => $data['motivo'] ?: null,
                 'estado'           => HoraTrabajo::ESTADO_REPORTADO,
                 'semana_fin'       => $semanaFin,
@@ -62,7 +58,7 @@ class HorasController extends Controller
                 'ci_usuario'       => $ci,
                 'semana_inicio'    => $semanaInicio,
                 'semana_fin'       => $semanaFin,
-                'horas_reportadas' => $data['horas_reportadas'],   // nunca > 21
+                'horas_reportadas' => $data['horas_reportadas'],   
                 'motivo'           => $data['motivo'] ?? null,
                 'estado'           => HoraTrabajo::ESTADO_REPORTADO,
             ]);
@@ -70,11 +66,9 @@ class HorasController extends Controller
             $status = 201;
         }
 
-        // Exoneración automática (si existe la tabla)
         $exoneracion = null;
         if (Schema::hasTable('exoneraciones')) {
             if ($data['horas_reportadas'] < 21) {
-                // crear/actualizar a 'pendiente'
                 $exoId = DB::table('exoneraciones')
                     ->where('ci_usuario', $ci)
                     ->whereDate('semana_inicio', $semanaInicio)
@@ -99,7 +93,6 @@ class HorasController extends Controller
                     $exoneracion = ['id' => $exoId, 'estado' => 'pendiente', 'action' => 'created'];
                 }
             } else {
-                // si ahora son 21 exactas, cancelar exoneración pendiente de esa semana
                 $aff = DB::table('exoneraciones')
                     ->where('ci_usuario', $ci)
                     ->whereDate('semana_inicio', $semanaInicio)
@@ -114,7 +107,6 @@ class HorasController extends Controller
         return response()->json(['ok' => true, 'id' => $id, 'exoneracion' => $exoneracion], $status);
     }
 
-    /** GET /api/horas/mias */
     public function index(Request $r)
     {
         $user = $r->user();
@@ -136,7 +128,6 @@ class HorasController extends Controller
         return response()->json(['ok' => true, 'items' => $items]);
     }
 
-    /** GET /api/admin/horas?estado=pendiente|aprobado|rechazado|todos&ci=XXXXXXXX */
     public function adminIndex(Request $r)
     {
         $estado = strtolower($r->query('estado', 'pendiente'));
@@ -157,7 +148,6 @@ class HorasController extends Controller
         return response()->json(['ok' => true, 'items' => $rows]);
     }
 
-    /** PUT /api/admin/horas/{id}/validar */
     public function validar(int $id)
     {
         $aff = HoraTrabajo::where('id', $id)->update([
@@ -170,7 +160,6 @@ class HorasController extends Controller
             : response()->json(['ok' => false, 'message' => 'Registro no encontrado'], 404);
     }
 
-    /** PUT /api/admin/horas/{id}/rechazar */
     public function rechazar(int $id)
     {
         $hora = HoraTrabajo::find($id);

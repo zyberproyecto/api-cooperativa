@@ -13,7 +13,6 @@ return [
             'provider' => 'users',
         ],
 
-        // Guard explícito para APIs con Sanctum (tokens personales)
         'api' => [
             'driver'   => 'sanctum',
             'provider' => 'users',
@@ -23,7 +22,6 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            // Modelo de usuario que usará auth:sanctum en esta API
             'model'  => \App\Models\Usuario::class,
         ],
     ],

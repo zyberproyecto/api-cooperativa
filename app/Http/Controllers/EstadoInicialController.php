@@ -8,9 +8,6 @@ use Illuminate\Support\Facades\Schema;
 
 class EstadoInicialController extends Controller
 {
-    /**
-     * GET /api/estado-inicial  (auth:sanctum)
-     */
     public function estado(Request $request)
     {
         $user = $request->user();
@@ -18,22 +15,19 @@ class EstadoInicialController extends Controller
             return response()->json(['ok' => false, 'message' => 'No autenticado'], 401);
         }
 
-        // CI normalizada
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? $user->ci ?? ''));
         if ($ci === '') {
             return response()->json(['ok' => false, 'message' => 'Usuario inválido'], 401);
         }
 
-        /* --------- Estado de registro (propiedad en usuarios) --------- */
         $estadoRegistro = strtolower((string)($user->estado_registro ?? 'pendiente'));
         if (!in_array($estadoRegistro, ['pendiente','aprobado','rechazado'], true)) {
             $estadoRegistro = 'pendiente';
         }
         $aprobado = ($estadoRegistro === 'aprobado');
 
-        /* --------- Perfil extendido / revisión --------- */
         $perfilCompleto  = (bool)($user->perfil_completo ?? false);
-        $perfilRevision  = 'incompleto'; // default
+        $perfilRevision  = 'incompleto'; 
 
         if (Schema::hasTable('usuarios_perfil')) {
             $perfilRow = DB::table('usuarios_perfil')->where('ci_usuario', $ci)->first();
@@ -45,7 +39,6 @@ class EstadoInicialController extends Controller
             }
         }
 
-        /* --------- Aporte inicial (comprobantes) --------- */
         $aporte = 'no_presentado';
         if (Schema::hasTable('comprobantes')) {
             $comprob = null;
@@ -66,8 +59,6 @@ class EstadoInicialController extends Controller
                 $aporte = in_array($est, ['pendiente','aprobado','rechazado'], true) ? $est : 'pendiente';
             }
         }
-
-        /* --------- Unidad asignada --------- */
         $unidad = 'no_asignada';
         if (Schema::hasTable('usuario_unidad')) {
             $asign = DB::table('usuario_unidad')
@@ -77,7 +68,6 @@ class EstadoInicialController extends Controller
             if ($asign) $unidad = 'asignada';
         }
 
-        /* --------- Ready + next step --------- */
         $ready = (
             $aprobado &&
             $perfilCompleto &&
@@ -114,12 +104,11 @@ class EstadoInicialController extends Controller
             $redirect = '/panel';
         }
 
-        /* --------- RESPUESTA (plana para tu front) --------- */
         return response()->json([
             'ok'               => true,
             'estado_registro'  => $estadoRegistro,
             'perfil_completo'  => $perfilCompleto,
-            'perfil'           => $perfilRevision,     // ← tu front lo llama "perfil"
+            'perfil'           => $perfilRevision,     
             'aporte_inicial'   => $aporte,
             'unidad'           => $unidad,
             'ready_for_dashboard' => $ready,
@@ -128,9 +117,6 @@ class EstadoInicialController extends Controller
         ]);
     }
 
-    /**
-     * GET /api/unidad/mia  (auth:sanctum)
-     */
     public function miUnidad(Request $request)
     {
         $user = $request->user();

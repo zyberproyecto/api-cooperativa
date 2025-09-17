@@ -7,10 +7,6 @@ use Illuminate\Support\Facades\DB;
 
 class UnidadesController extends Controller
 {
-    /**
-     * GET /admin/unidades
-     * Lista unidades con filtro opcional por estado_unidad (disponible|asignada|entregada|todas)
-     */
     public function index(Request $r)
     {
         $estado = strtolower($r->query('estado', 'todas'));
@@ -26,10 +22,6 @@ class UnidadesController extends Controller
         return view('unidades.index', compact('unidades', 'estado'));
     }
 
-    /**
-     * GET /admin/unidades/{id}
-     * Muestra detalle de la unidad y su asignación activa (si existe)
-     */
     public function show($id)
     {
         $u = DB::table('unidades')->where('id', $id)->first();
@@ -52,15 +44,6 @@ class UnidadesController extends Controller
         return view('unidades.show', compact('u', 'asignacion'));
     }
 
-    /**
-     * POST /admin/unidades/asignar
-     * Reglas:
-     *  - CI normalizada (7–8 dígitos), usuario existente y estado_registro = 'aprobado'
-     *  - Aporte inicial aprobado en comprobantes
-     *  - Perfil extendido aprobado en usuarios_perfil
-     *  - Sin asignación activa previa del socio
-     *  - Unidad en estado_unidad = 'disponible'
-     */
     public function asignar(Request $r)
     {
         $data = $r->validate([
@@ -69,7 +52,6 @@ class UnidadesController extends Controller
             'nota'       => ['nullable','string','max:5000'],
         ]);
 
-        // Normalizar CI → solo dígitos (7–8)
         $ci = preg_replace('/\D/', '', (string)$data['ci_usuario']);
         if (!preg_match('/^\d{7,8}$/', $ci)) {
             return redirect()->back()->with('error', 'La CI debe tener 7 u 8 dígitos (solo números).')->withInput();
@@ -78,7 +60,6 @@ class UnidadesController extends Controller
         try {
             $ok = DB::transaction(function () use ($ci, $data) {
 
-                // 1) Unidad disponible (FOR UPDATE)
                 $unidad = DB::table('unidades')->lockForUpdate()->where('id', $data['unidad_id'])->first();
                 if (!$unidad) {
                     throw new \RuntimeException('La unidad no existe.');
@@ -87,7 +68,6 @@ class UnidadesController extends Controller
                     throw new \RuntimeException('La unidad no está disponible.');
                 }
 
-                // 2) Usuario existe y aprobado
                 $usr = DB::table('usuarios')->where('ci_usuario', $ci)->first();
                 if (!$usr) {
                     throw new \RuntimeException('No existe un usuario con esa CI.');
@@ -97,7 +77,6 @@ class UnidadesController extends Controller
                     throw new \RuntimeException('El usuario no está habilitado (estado_registro no aprobado).');
                 }
 
-                // 3) Aporte inicial aprobado
                 $comp = DB::table('comprobantes')
                     ->where('ci_usuario', $ci)
                     ->where('tipo', 'aporte_inicial')
@@ -108,13 +87,11 @@ class UnidadesController extends Controller
                     throw new \RuntimeException('Aporte inicial no aprobado.');
                 }
 
-                // 4) Perfil extendido aprobado
                 $perfil = DB::table('usuarios_perfil')->where('ci_usuario', $ci)->first();
                 if (!$perfil || strtolower((string)$perfil->estado_revision) !== 'aprobado') {
                     throw new \RuntimeException('Perfil de socio no está aprobado.');
                 }
 
-                // 5) Sin asignación activa previa del socio
                 $activa = DB::table('usuario_unidad')
                     ->where('ci_usuario', $ci)
                     ->where('estado', 'activa')
@@ -124,7 +101,6 @@ class UnidadesController extends Controller
                     throw new \RuntimeException('El socio ya tiene una asignación activa.');
                 }
 
-                // 6) Crear asignación y marcar unidad como asignada
                 DB::table('usuario_unidad')->insert([
                     'ci_usuario'       => $ci,
                     'unidad_id'        => $data['unidad_id'],
@@ -158,12 +134,6 @@ class UnidadesController extends Controller
         }
     }
 
-    /**
-     * PUT /admin/unidades/{id}/liberar
-     * - id = ID de usuario_unidad
-     * Libera la asignación (estado='liberada').
-     * Si la unidad queda sin asignaciones activas, pasa a estado_unidad='disponible'.
-     */
     public function liberar($id, Request $r)
     {
         try {
@@ -174,11 +144,9 @@ class UnidadesController extends Controller
                     throw new \RuntimeException('No se encontró la asignación.');
                 }
                 if (strtolower((string)$asig->estado) !== 'activa') {
-                    // ya estaba liberada (idempotente)
                     return true;
                 }
 
-                // Liberar la asignación
                 $nota = $r->input('nota');
                 DB::table('usuario_unidad')->where('id', $id)->update([
                     'estado'     => 'liberada',
@@ -186,7 +154,6 @@ class UnidadesController extends Controller
                     'updated_at' => now(),
                 ]);
 
-                // Si no hay más asignaciones activas para esa unidad, marcarla disponible
                 $tieneActiva = DB::table('usuario_unidad')
                     ->where('unidad_id', $asig->unidad_id)
                     ->where('estado', 'activa')

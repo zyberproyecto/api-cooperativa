@@ -11,7 +11,6 @@ class UsuarioUnidadSeeder extends Seeder
     {
         $now = now();
 
-        // Usar primera 'disponible'
         $unidad = DB::table('unidades')->where('estado_unidad', 'disponible')->first();
         if (!$unidad) return;
 

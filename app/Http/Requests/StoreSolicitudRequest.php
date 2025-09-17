@@ -13,22 +13,18 @@ class StoreSolicitudRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        // Normalizar boolean "si/no"
         $menores = $this->input('menores_a_cargo');
         if (is_string($menores)) {
             $menores = strtolower(trim($menores));
             $menores = in_array($menores, ['si','sí','true','1'], true) ? 1 : 0;
             $this->merge(['menores_a_cargo' => (bool)$menores]);
         }
-
-        // Si viene "intereses" tipo "2 dormitorios", extraer número a 'dormitorios'
         if (!$this->filled('dormitorios') && $this->filled('intereses')) {
             if (preg_match('/\d+/', (string)$this->input('intereses'), $m)) {
                 $this->merge(['dormitorios' => (int)$m[0]]);
             }
         }
-
-        // Unificar 'ci' para el controller (aceptar 'ci' o 'ci_usuario')
+        
         if (!$this->filled('ci') && $this->filled('ci_usuario')) {
             $this->merge(['ci' => $this->input('ci_usuario')]);
         }

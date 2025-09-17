@@ -18,7 +18,6 @@ class RequireApprovedSocio
             ], 401);
         }
 
-        // Aceptamos solo socios con estado_registro = 'aprobado'
         $estado = strtolower((string)($u->estado_registro ?? ''));
         if ($estado !== 'aprobado') {
             return response()->json([

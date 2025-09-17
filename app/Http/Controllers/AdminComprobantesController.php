@@ -7,23 +7,19 @@ use Illuminate\Support\Facades\DB;
 
 class AdminComprobantesController extends Controller
 {
-    /**
-     * GET /api/admin/comprobantes?estado=pendiente|aprobado|rechazado|todos&tipo=inicial|aporte_inicial|mensual
-     */
-    public function index(Request $r)
+       public function index(Request $r)
     {
-        $estado = strtolower((string)$r->query('estado', 'pendiente'));   // pendiente|aprobado|rechazado|todos
-        $tipo   = $r->query('tipo');                                      // inicial|aporte_inicial|mensual|null
+        $estado = strtolower((string)$r->query('estado', 'pendiente'));   
+        $tipo   = $r->query('tipo');                                 
 
-        // Normalizar estado a los valores reales de la BD (enum: pendiente/aprobado/rechazado)
+        
         $estadoNorm = match ($estado) {
             'pendiente', 'aprobado', 'rechazado' => $estado,
             'todos' => 'todos',
             default => 'pendiente',
         };
 
-        // Normalizar tipo: alias "inicial" -> "aporte_inicial" (enum real: aporte_inicial|mensual)
-        $tipoNorm = match ($tipo) {
+                $tipoNorm = match ($tipo) {
             'inicial' => 'aporte_inicial',
             'aporte_inicial', 'mensual' => $tipo,
             default => null,
@@ -44,10 +40,7 @@ class AdminComprobantesController extends Controller
         return response()->json(['ok' => true, 'items' => $rows]);
     }
 
-    /**
-     * PUT /api/admin/comprobantes/{id}/validar
-     * Body opcional: { "nota_admin": "..." }
-     */
+
     public function validar(Request $r, int $id)
     {
         $nota = $r->input('nota_admin');
@@ -67,10 +60,6 @@ class AdminComprobantesController extends Controller
             : response()->json(['ok' => false, 'message' => 'Comprobante no encontrado'], 404);
     }
 
-    /**
-     * PUT /api/admin/comprobantes/{id}/rechazar
-     * Body opcional: { "motivo": "..." }
-     */
     public function rechazar(Request $r, int $id)
     {
         $motivo = $r->input('motivo');

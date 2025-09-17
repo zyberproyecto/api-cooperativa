@@ -12,7 +12,7 @@ class ComprobantesSeeder extends Seeder
         $now = now();
 
         DB::table('comprobantes')->insertOrIgnore([
-            // Aporte inicial APROBADO para 22222222
+        
             [
                 'ci_usuario' => '22222222',
                 'tipo'       => 'aporte_inicial',
@@ -26,7 +26,7 @@ class ComprobantesSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            // Aporte inicial PENDIENTE para 33333333
+            
             [
                 'ci_usuario' => '33333333',
                 'tipo'       => 'aporte_inicial',
@@ -40,7 +40,7 @@ class ComprobantesSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            // Aporte mensual APROBADO para 22222222 (ejemplo)
+
             [
                 'ci_usuario' => '22222222',
                 'tipo'       => 'aporte_mensual',

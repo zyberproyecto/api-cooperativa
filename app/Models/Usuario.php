@@ -9,4 +9,11 @@ class Usuario extends Authenticatable {
   protected $primaryKey='ci_usuario';
   public $incrementing=false; protected $keyType='string';
   protected $hidden=['password'];
+
+public function unidades()
+{
+    return $this->belongsToMany(Unidad::class, 'usuario_unidad', 'ci_usuario', 'unidad_id')
+                ->withPivot(['fecha_asignacion', 'estado', 'nota_admin'])
+                ->withTimestamps();
+}
 }

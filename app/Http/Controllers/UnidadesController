@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class UnidadesController extends Controller
 {
@@ -52,72 +51,49 @@ class UnidadesController extends Controller
         ]);
 
         $ci = preg_replace('/\D/', '', (string)$data['ci_usuario']);
+  
         if (!preg_match('/^\d{7,8}$/', $ci)) {
-            return redirect()->back()->with('error', 'La CI debe tener 7 u 8 dígitos (solo números).')->withInput();
+            return back()->with('error', 'La CI debe tener 7 u 8 dígitos (solo números).')->withInput();
         }
 
         try {
             $ok = DB::transaction(function () use ($ci, $data) {
 
-                // --- 1) Unidad disponible (lock para evitar carrera)
                 $unidad = DB::table('unidades')->lockForUpdate()->where('id', $data['unidad_id'])->first();
-                if (!$unidad) {
-                    throw new \RuntimeException('La unidad no existe.');
-                }
-                if (strtolower((string)$unidad->estado_unidad) !== 'disponible') {
+                if (!$unidad) throw new \RuntimeException('La unidad no existe.');
+                if ((string)$unidad->estado_unidad !== 'disponible') {
                     throw new \RuntimeException('La unidad no está disponible.');
                 }
 
-                // --- 2) Usuario válido y aprobado
                 $usr = DB::table('usuarios')->where('ci_usuario', $ci)->first();
-                if (!$usr) {
-                    throw new \RuntimeException('No existe un usuario con esa CI.');
-                }
-                $estadoUsr = strtolower((string)($usr->estado_registro ?? 'pendiente'));
-                if (!in_array($estadoUsr, ['aprobado','aprobada','activo','activa','ok'], true)) {
-                    throw new \RuntimeException('El usuario no está habilitado (estado_registro no aprobado).');
-                }
+                if (!$usr) throw new \RuntimeException('No existe un usuario con esa CI.');
 
-                // --- 3) Perfil aprobado (y que exista)
-                $perfil = DB::table('usuarios_perfil')->where('ci_usuario', $ci)->first();
-                if (!$perfil) {
-                    throw new \RuntimeException('Perfil de socio incompleto: faltan datos personales.');
-                }
-                if (strtolower((string)$perfil->estado_revision) !== 'aprobado') {
-                    throw new \RuntimeException('Perfil de socio no está aprobado.');
-                }
+                $perfil = DB::table('usuarios_perfil')
+                    ->where('ci_usuario', $ci)
+                    ->where('estado_revision', 'aprobado')
+                    ->first();
+                if (!$perfil) throw new \RuntimeException('Perfil de socio no está aprobado.');
 
-                // --- 4) Aporte inicial aprobado (tipo o tipo_aporte)
-                $comp = null;
-                if (Schema::hasTable('comprobantes')) {
-                    if (Schema::hasColumn('comprobantes', 'tipo_aporte')) {
-                        $comp = DB::table('comprobantes')
-                            ->where('ci_usuario', $ci)
-                            ->whereIn('tipo_aporte', ['inicial','aporte_inicial'])
-                            ->orderByDesc('id')
-                            ->first();
-                    } elseif (Schema::hasColumn('comprobantes', 'tipo')) {
-                        $comp = DB::table('comprobantes')
-                            ->where('ci_usuario', $ci)
-                            ->whereIn('tipo', ['inicial','aporte_inicial'])
-                            ->orderByDesc('id')
-                            ->first();
-                    }
-                }
-                if (!$comp || strtolower((string)$comp->estado) !== 'aprobado') {
-                    throw new \RuntimeException('Aporte inicial no está aprobado.');
-                }
+                $comp = DB::table('comprobantes')
+                    ->where('ci_usuario', $ci)
+                    ->where('tipo', 'aporte_inicial')
+                    ->where('estado', 'aprobado')
+                    ->orderByDesc('id')
+                    ->first();
+                if (!$comp) throw new \RuntimeException('Aporte inicial no está aprobado.');
 
-                // --- 5) Que no tenga ya una asignación activa
-                $activa = DB::table('usuario_unidad')
+                $yaTiene = DB::table('usuario_unidad')
                     ->where('ci_usuario', $ci)
                     ->where('estado', 'activa')
                     ->exists();
-                if ($activa) {
-                    throw new \RuntimeException('El socio ya tiene una asignación activa.');
-                }
+                if ($yaTiene) throw new \RuntimeException('El socio ya tiene una asignación activa.');
 
-                // --- 6) Crear asignación
+                $ocupada = DB::table('usuario_unidad')
+                    ->where('unidad_id', $data['unidad_id'])
+                    ->where('estado', 'activa')
+                    ->exists();
+                if ($ocupada) throw new \RuntimeException('La unidad ya está asignada.');
+
                 DB::table('usuario_unidad')->insert([
                     'ci_usuario'       => $ci,
                     'unidad_id'        => $data['unidad_id'],
@@ -128,7 +104,6 @@ class UnidadesController extends Controller
                     'updated_at'       => now(),
                 ]);
 
-                // --- 7) Marcar unidad como asignada
                 DB::table('unidades')
                     ->where('id', $data['unidad_id'])
                     ->update([
@@ -145,10 +120,10 @@ class UnidadesController extends Controller
                     ->with('ok', 'Unidad asignada correctamente.');
             }
 
-            return redirect()->back()->with('error', 'No se pudo asignar la unidad.')->withInput();
+            return back()->with('error', 'No se pudo asignar la unidad.')->withInput();
 
         } catch (\Throwable $e) {
-            return redirect()->back()->with('error', $e->getMessage())->withInput();
+            return back()->with('error', $e->getMessage())->withInput();
         }
     }
 
@@ -158,14 +133,11 @@ class UnidadesController extends Controller
             $ok = DB::transaction(function () use ($id, $r) {
 
                 $asig = DB::table('usuario_unidad')->lockForUpdate()->where('id', $id)->first();
-                if (!$asig) {
-                    throw new \RuntimeException('No se encontró la asignación.');
-                }
-                if (strtolower((string)$asig->estado) !== 'activa') {
-                    return true;
-                }
+                if (!$asig) throw new \RuntimeException('No se encontró la asignación.');
+                if ((string)$asig->estado !== 'activa') return true;
 
                 $nota = $r->input('nota');
+
                 DB::table('usuario_unidad')->where('id', $id)->update([
                     'estado'     => 'liberada',
                     'nota_admin' => $nota ?: $asig->nota_admin,
@@ -187,10 +159,10 @@ class UnidadesController extends Controller
                 return true;
             });
 
-            return redirect()->back()->with('ok', $ok ? 'Asignación liberada.' : 'No se pudo liberar la asignación.');
+            return back()->with('ok', $ok ? 'Asignación liberada.' : 'No se pudo liberar la asignación.');
 
         } catch (\Throwable $e) {
-            return redirect()->back()->with('error', $e->getMessage());
+            return back()->with('error', $e->getMessage());
         }
     }
 }

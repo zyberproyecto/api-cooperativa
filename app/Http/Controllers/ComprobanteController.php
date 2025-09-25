@@ -18,7 +18,7 @@ class ComprobanteController extends Controller
         }
 
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
-        if ($ci === '' || strlen($ci) !== 8) {
+        if ($ci === '' || !preg_match('/^\d{7,8}$/', $ci)) {
             return response()->json(['ok' => false, 'msg' => 'CI inválido para la operación.'], 400);
         }
 
@@ -33,16 +33,18 @@ class ComprobanteController extends Controller
             'archivo' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:8192'],
         ]);
 
-        // 1) Reglas de flujo
-        $perfilCompleto = (bool)($user->perfil_completo ?? false);
-        if (!$perfilCompleto && $data['tipo'] !== 'aporte_inicial') {
+        $perfilAprobado = Schema::hasTable('usuarios_perfil') && DB::table('usuarios_perfil')
+            ->where('ci_usuario', $ci)
+            ->where('estado_revision', 'aprobado')
+            ->exists();
+
+        if (in_array($data['tipo'], ['aporte_mensual', 'compensatorio'], true) && !$perfilAprobado) {
             return response()->json([
                 'ok'  => false,
-                'msg' => 'Debes completar tu perfil para enviar este tipo de comprobante.',
+                'msg' => 'Debes tener el perfil aprobado para enviar este tipo de comprobante.',
             ], 422);
         }
 
-        // Para mensuales/compensatorio: exigir unidad asignada
         if (in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             if (!Schema::hasTable('usuario_unidad')) {
                 return response()->json(['ok' => false, 'msg' => 'No está configurada la tabla de asignaciones.'], 500);
@@ -66,11 +68,9 @@ class ComprobanteController extends Controller
             ], 422);
         }
 
-        // 2) Unicidad lógica: evitar duplicados molestos
         $cols = Schema::getColumnListing('comprobantes');
         $colTipo = in_array('tipo_aporte', $cols, true) ? 'tipo_aporte' : 'tipo';
 
-        // Aporte inicial: permitir solo 1 pendiente/aprobado. Si el último es rechazado, permitir reintento.
         if ($data['tipo'] === 'aporte_inicial') {
             $existeAI = DB::table('comprobantes')
                 ->where('ci_usuario', $ci)
@@ -85,7 +85,6 @@ class ComprobanteController extends Controller
             }
         }
 
-        // Mensual/Compensatorio: evitar duplicar mismo periodo+tipo si ya hay pendiente/aprobado
         if (in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             $existePeriodo = DB::table('comprobantes')
                 ->where('ci_usuario', $ci)
@@ -101,7 +100,7 @@ class ComprobanteController extends Controller
             }
         }
 
-        // 3) Guardar archivo
+        
         try {
             $path      = $request->file('archivo')->store("comprobantes/{$ci}", 'public');
             $publicUrl = Storage::url($path);
@@ -114,7 +113,7 @@ class ComprobanteController extends Controller
             ], 500);
         }
 
-        // 4) Insert DB
+        
         try {
             $insert = [
                 'ci_usuario' => $ci,
@@ -167,8 +166,9 @@ class ComprobanteController extends Controller
             return response()->json(['ok' => false, 'msg' => 'No autenticado.'], 401);
         }
 
+        
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
-        if ($ci === '' || strlen($ci) !== 8) {
+        if ($ci === '' || !preg_match('/^\d{7,8}$/', $ci)) {
             return response()->json(['ok' => false, 'msg' => 'CI inválido.'], 400);
         }
 
@@ -183,7 +183,6 @@ class ComprobanteController extends Controller
             ->where('ci_usuario', $ci)
             ->orderByDesc('created_at')
             ->get()
-            // normalizar: asegurar que siempre haya clave 'tipo'
             ->map(function ($it) use ($colTipo) {
                 $it->tipo = $it->{$colTipo} ?? null;
                 return $it;

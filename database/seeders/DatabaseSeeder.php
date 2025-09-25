@@ -10,10 +10,6 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             UnidadesSeeder::class,
-            ComprobantesSeeder::class,
-            HorasTrabajoSeeder::class,
-            ExoneracionesSeeder::class,
-            UsuarioUnidadSeeder::class,
         ]);
     }
 }

@@ -33,6 +33,19 @@ class ComprobanteController extends Controller
             'archivo' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:8192'],
         ]);
 
+        // --- NUEVO: exigir "aprobado" para todo lo que no sea aporte_inicial ---
+        $estado   = strtolower((string)($user->estado_registro ?? $user->estado ?? 'pendiente'));
+        $aprobado = in_array($estado, ['aprobado','aprobada','ok','activo','activa','validado','validada'], true);
+
+        if (!$aprobado && in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
+            return response()->json([
+                'ok'    => false,
+                'msg'   => 'Tu cuenta aún no está aprobada para este tipo de comprobante.',
+            ], 403);
+        }
+        // ----------------------------------------------------------------------
+
+        // Perfil aprobado para mensual/compensatorio (tu lógica existente)
         $perfilAprobado = Schema::hasTable('usuarios_perfil') && DB::table('usuarios_perfil')
             ->where('ci_usuario', $ci)
             ->where('estado_revision', 'aprobado')
@@ -45,6 +58,7 @@ class ComprobanteController extends Controller
             ], 422);
         }
 
+        // Unidad activa requerida para mensual/compensatorio (tu lógica existente)
         if (in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             if (!Schema::hasTable('usuario_unidad')) {
                 return response()->json(['ok' => false, 'msg' => 'No está configurada la tabla de asignaciones.'], 500);
@@ -100,7 +114,6 @@ class ComprobanteController extends Controller
             }
         }
 
-        
         try {
             $path      = $request->file('archivo')->store("comprobantes/{$ci}", 'public');
             $publicUrl = Storage::url($path);
@@ -113,7 +126,6 @@ class ComprobanteController extends Controller
             ], 500);
         }
 
-        
         try {
             $insert = [
                 'ci_usuario' => $ci,
@@ -166,7 +178,6 @@ class ComprobanteController extends Controller
             return response()->json(['ok' => false, 'msg' => 'No autenticado.'], 401);
         }
 
-        
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
         if ($ci === '' || !preg_match('/^\d{7,8}$/', $ci)) {
             return response()->json(['ok' => false, 'msg' => 'CI inválido.'], 400);

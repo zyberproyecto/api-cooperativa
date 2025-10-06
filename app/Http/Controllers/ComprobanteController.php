@@ -17,6 +17,7 @@ class ComprobanteController extends Controller
             return response()->json(['ok' => false, 'msg' => 'No autenticado.'], 401);
         }
 
+        // --- CI del usuario ---
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? ''));
         if ($ci === '' || !preg_match('/^\d{7,8}$/', $ci)) {
             return response()->json(['ok' => false, 'msg' => 'CI inválido para la operación.'], 400);
@@ -26,26 +27,27 @@ class ComprobanteController extends Controller
             return response()->json(['ok' => false, 'msg' => 'Tabla comprobantes inexistente.'], 500);
         }
 
+        // --- Validación de entrada ---
         $data = $request->validate([
             'tipo'    => ['required', 'in:aporte_mensual,aporte_inicial,compensatorio'],
             'periodo' => ['nullable', 'regex:/^\d{4}-(0[1-9]|1[0-2])$/', 'required_if:tipo,aporte_mensual,compensatorio'],
-            'monto'   => ['required', 'numeric', 'min:0'],
+            'monto'   => ['required', 'numeric', 'min:1'],
             'archivo' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:8192'],
         ]);
 
-        // --- NUEVO: exigir "aprobado" para todo lo que no sea aporte_inicial ---
+        // --- Reglas de estado de cuenta / permisos ---
         $estado   = strtolower((string)($user->estado_registro ?? $user->estado ?? 'pendiente'));
         $aprobado = in_array($estado, ['aprobado','aprobada','ok','activo','activa','validado','validada'], true);
 
+        // Solo permitimos mensual/compensatorio si la cuenta está aprobada
         if (!$aprobado && in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             return response()->json([
-                'ok'    => false,
-                'msg'   => 'Tu cuenta aún no está aprobada para este tipo de comprobante.',
+                'ok'  => false,
+                'msg' => 'Tu cuenta aún no está aprobada para este tipo de comprobante.',
             ], 403);
         }
-        // ----------------------------------------------------------------------
 
-        // Perfil aprobado para mensual/compensatorio (tu lógica existente)
+        // Perfil aprobado requerido para mensual/compensatorio
         $perfilAprobado = Schema::hasTable('usuarios_perfil') && DB::table('usuarios_perfil')
             ->where('ci_usuario', $ci)
             ->where('estado_revision', 'aprobado')
@@ -58,7 +60,7 @@ class ComprobanteController extends Controller
             ], 422);
         }
 
-        // Unidad activa requerida para mensual/compensatorio (tu lógica existente)
+        // Unidad activa requerida para mensual/compensatorio
         if (in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             if (!Schema::hasTable('usuario_unidad')) {
                 return response()->json(['ok' => false, 'msg' => 'No está configurada la tabla de asignaciones.'], 500);
@@ -67,6 +69,7 @@ class ComprobanteController extends Controller
                 ->where('ci_usuario', $ci)
                 ->where('estado', 'activa')
                 ->exists();
+
             if (!$tieneUnidad) {
                 return response()->json([
                     'ok'  => false,
@@ -75,6 +78,7 @@ class ComprobanteController extends Controller
             }
         }
 
+        // --- Validación de archivo ---
         if (!$request->hasFile('archivo') || !$request->file('archivo')->isValid()) {
             return response()->json([
                 'ok'  => false,
@@ -82,15 +86,18 @@ class ComprobanteController extends Controller
             ], 422);
         }
 
-        $cols = Schema::getColumnListing('comprobantes');
+        // --- Columnas dinámicas (tipo vs tipo_aporte) ---
+        $cols    = Schema::getColumnListing('comprobantes');
         $colTipo = in_array('tipo_aporte', $cols, true) ? 'tipo_aporte' : 'tipo';
 
+        // --- Único AI pendiente o aprobado ---
         if ($data['tipo'] === 'aporte_inicial') {
             $existeAI = DB::table('comprobantes')
                 ->where('ci_usuario', $ci)
                 ->whereIn($colTipo, ['inicial','aporte_inicial'])
                 ->whereIn('estado', ['pendiente','aprobado'])
                 ->exists();
+
             if ($existeAI) {
                 return response()->json([
                     'ok'  => false,
@@ -99,6 +106,7 @@ class ComprobanteController extends Controller
             }
         }
 
+        // --- Evitar duplicado de periodo para mensual/compensatorio ---
         if (in_array($data['tipo'], ['aporte_mensual','compensatorio'], true)) {
             $existePeriodo = DB::table('comprobantes')
                 ->where('ci_usuario', $ci)
@@ -106,6 +114,7 @@ class ComprobanteController extends Controller
                 ->when(in_array('periodo', $cols, true), fn($q) => $q->where('periodo', $data['periodo']))
                 ->whereIn('estado', ['pendiente','aprobado'])
                 ->exists();
+
             if ($existePeriodo) {
                 return response()->json([
                     'ok'  => false,
@@ -114,6 +123,7 @@ class ComprobanteController extends Controller
             }
         }
 
+        // --- Guardar archivo en storage público ---
         try {
             $path      = $request->file('archivo')->store("comprobantes/{$ci}", 'public');
             $publicUrl = Storage::url($path);
@@ -126,6 +136,7 @@ class ComprobanteController extends Controller
             ], 500);
         }
 
+        // --- Insert en DB ---
         try {
             $insert = [
                 'ci_usuario' => $ci,
@@ -151,10 +162,10 @@ class ComprobanteController extends Controller
         } catch (\Throwable $e) {
             try { Storage::disk('public')->delete($path); } catch (\Throwable $ignored) {}
             Log::error('Comprobantes@store: fallo insert DB', [
-                'ci' => $ci,
-                'tipo' => $data['tipo'] ?? null,
+                'ci'      => $ci,
+                'tipo'    => $data['tipo'] ?? null,
                 'periodo' => $data['periodo'] ?? null,
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
             ]);
             return response()->json([
                 'ok'  => false,
@@ -166,7 +177,7 @@ class ComprobanteController extends Controller
         return response()->json([
             'ok'      => true,
             'id'      => $id,
-            'msg'     => 'Comprobante cargado.',
+            'msg'     => 'Comprobante cargado. Queda en revisión.',
             'archivo' => $publicUrl,
         ], 201);
     }
@@ -187,15 +198,20 @@ class ComprobanteController extends Controller
             return response()->json(['ok' => false, 'msg' => 'Tabla comprobantes inexistente.'], 500);
         }
 
-        $cols = Schema::getColumnListing('comprobantes');
+        $cols    = Schema::getColumnListing('comprobantes');
         $colTipo = in_array('tipo_aporte', $cols, true) ? 'tipo_aporte' : 'tipo';
 
         $items = DB::table('comprobantes')
+            ->select('id', $colTipo . ' as tipo', 'periodo', 'estado', 'monto', 'archivo', 'created_at', 'updated_at', 'aprobado_at')
             ->where('ci_usuario', $ci)
             ->orderByDesc('created_at')
             ->get()
-            ->map(function ($it) use ($colTipo) {
-                $it->tipo = $it->{$colTipo} ?? null;
+            ->map(function ($it) {
+                // Normalizaciones útiles para el front
+                $it->tipo    = (string)($it->tipo ?? '');
+                $it->periodo = $it->periodo ?? null;
+                $it->estado  = (string)($it->estado ?? 'pendiente');
+                $it->monto   = is_null($it->monto) ? null : (float)$it->monto;
                 return $it;
             });
 

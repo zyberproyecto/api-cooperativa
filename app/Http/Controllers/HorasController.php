@@ -23,10 +23,22 @@ class HorasController extends Controller
             return response()->json(['ok' => false, 'message' => 'Usuario inválido.'], 401);
         }
 
-   
+        // 🔒 BLOQUEO: exigir unidad activa para poder registrar horas
+        if (!Schema::hasTable('usuario_unidad') ||
+            !DB::table('usuario_unidad')
+                ->where('ci_usuario', $ci)
+                ->where('estado', 'activa')
+                ->exists()
+        ) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'No tenés una unidad activa. No podés registrar horas todavía.',
+            ], 422);
+        }
+
         $data = $r->validate([
             'semana_inicio'    => ['required','date_format:Y-m-d'],
-            'horas_reportadas' => ['required','numeric','min:0','max:21'],   
+            'horas_reportadas' => ['required','numeric','min:0','max:21'],
             'motivo'           => ['nullable','string','max:1000'],
         ]);
 
@@ -36,8 +48,13 @@ class HorasController extends Controller
             ]);
         }
 
+        // ✅ Debe ser lunes (ISO: 1 = lunes)
         $semanaInicio = $data['semana_inicio'];
-        $semanaFin    = Carbon::parse($semanaInicio)->addDays(6)->toDateString();
+        if (Carbon::parse($semanaInicio)->dayOfWeekIso !== 1) {
+            return response()->json(['ok' => false, 'message' => 'La fecha debe ser un lunes.'], 422);
+        }
+
+        $semanaFin = Carbon::parse($semanaInicio)->addDays(6)->toDateString();
 
         $existeId = HoraTrabajo::where('ci_usuario', $ci)
             ->whereDate('semana_inicio', $semanaInicio)
@@ -45,7 +62,7 @@ class HorasController extends Controller
 
         if ($existeId) {
             HoraTrabajo::where('id', $existeId)->update([
-                'horas_reportadas' => $data['horas_reportadas'],  
+                'horas_reportadas' => $data['horas_reportadas'],
                 'motivo'           => $data['motivo'] ?: null,
                 'estado'           => HoraTrabajo::ESTADO_REPORTADO,
                 'semana_fin'       => $semanaFin,
@@ -58,7 +75,7 @@ class HorasController extends Controller
                 'ci_usuario'       => $ci,
                 'semana_inicio'    => $semanaInicio,
                 'semana_fin'       => $semanaFin,
-                'horas_reportadas' => $data['horas_reportadas'],   
+                'horas_reportadas' => $data['horas_reportadas'],
                 'motivo'           => $data['motivo'] ?? null,
                 'estado'           => HoraTrabajo::ESTADO_REPORTADO,
             ]);
@@ -66,6 +83,7 @@ class HorasController extends Controller
             $status = 201;
         }
 
+        // Mantener tu lógica de exoneraciones
         $exoneracion = null;
         if (Schema::hasTable('exoneraciones')) {
             if ($data['horas_reportadas'] < 21) {
@@ -117,6 +135,19 @@ class HorasController extends Controller
         $ci = preg_replace('/\D/', '', (string)($user->ci_usuario ?? $user->ci ?? ''));
         if ($ci === '') {
             return response()->json(['ok' => false, 'message' => 'Usuario inválido.'], 401);
+        }
+
+        // 🔒 BLOQUEO: exigir unidad activa para ver horas
+        if (!Schema::hasTable('usuario_unidad') ||
+            !DB::table('usuario_unidad')
+                ->where('ci_usuario', $ci)
+                ->where('estado', 'activa')
+                ->exists()
+        ) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'No tenés una unidad activa para ver/registrar horas.',
+            ], 422);
         }
 
         $items = HoraTrabajo::where('ci_usuario', $ci)

@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\HorasController;
 use App\Http\Controllers\ComprobanteController;
 use App\Http\Controllers\EstadoInicialController;
+use App\Http\Controllers\EstadoCuentaController;
 
 Route::options('{any}', fn () => response()->noContent())->where('any', '.*');
 
@@ -28,6 +29,6 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::middleware(['auth:sanctum', 'require.approved'])->group(function () {
     Route::post('/horas',     [HorasController::class, 'store'])->name('horas.store');
     Route::get('/horas/mias', [HorasController::class, 'index'])->name('horas.index');
-
     Route::get('/unidad/mia', [EstadoInicialController::class, 'miUnidad'])->name('unidad.mia');
+    Route::get('/estado-cuenta', [EstadoCuentaController::class, 'show']);
 });
